@@ -147,13 +147,13 @@ def extract_frames_from_video(
         print_warning(
             f"Low frame rate ({fps} fps) - may result in poor 3D reconstruction"
         )
-        print_info("Recommendation: Use 1.5-3.0 fps for better results")
+        print_info("💡 Recommendation: Use 1.5-3.0 fps for better results")
     elif fps > 5.0:
         print_warning(
             f"High frame rate ({fps} fps) - will create many frames and slow processing"
         )
         print_info(
-            "Recommendation: Use 1.5-3.0 fps unless you need high temporal resolution"
+            "💡 Recommendation: Use 1.5-3.0 fps unless you need high temporal resolution"
         )
 
     if verbose:
@@ -178,12 +178,12 @@ def extract_frames_from_video(
             print_warning(
                 "Very few frames extracted - may not be sufficient for 3D reconstruction"
             )
-            print_info("Consider increasing --fps or using a longer video")
+            print_info("💡 Consider increasing --fps or using a longer video")
         elif len(extracted_frames) > 500:
             print_warning(
                 f"Many frames extracted ({len(extracted_frames)}) - processing will be slow"
             )
-            print_info("Consider reducing --fps for faster processing")
+            print_info("💡 Consider reducing --fps for faster processing")
 
         if len(extracted_frames) == 0:
             print_error("No frames were extracted from the video")
@@ -204,87 +204,6 @@ def extract_frames_from_video(
         print_info("  macOS: brew install ffmpeg")
         print_info("  Windows: Download from https://ffmpeg.org/")
         return False
-
-
-def preprocess_fisheye_images(image_dir, verbose=False):
-    """Preprocess fisheye images for better feature detection"""
-    try:
-        import cv2
-        import numpy as np
-    except ImportError:
-        print_warning("OpenCV not available - skipping fisheye preprocessing")
-        print_info("Install with: pip install opencv-python")
-        return False
-
-    processed_dir = image_dir / "processed_fisheye"
-    processed_dir.mkdir(exist_ok=True)
-
-    # Find all image files
-    image_extensions = {
-        ".jpg",
-        ".jpeg",
-        ".png",
-        ".tiff",
-        ".tif",
-        ".JPG",
-        ".JPEG",
-        ".PNG",
-        ".TIFF",
-        ".TIF",
-    }
-    image_files = []
-    for file_path in image_dir.rglob("*"):
-        if file_path.suffix in image_extensions and not str(file_path).startswith(
-            str(processed_dir)
-        ):
-            image_files.append(file_path)
-
-    if not image_files:
-        print_error("No images found for fisheye preprocessing")
-        return False
-
-    print_step(f"Preprocessing {len(image_files)} fisheye images...")
-
-    processed_count = 0
-    for img_path in image_files:
-        try:
-            # Load image
-            img = cv2.imread(str(img_path))
-            if img is None:
-                continue
-
-            h, w = img.shape[:2]
-
-            # Create circular mask to remove outer regions
-            center = (w // 2, h // 2)
-            radius = min(center[0], center[1]) - 20  # Small margin
-
-            mask = np.zeros((h, w), dtype=np.uint8)
-            cv2.circle(mask, center, radius, 255, -1)
-
-            # Apply mask
-            img_masked = cv2.bitwise_and(img, img, mask=mask)
-
-            # Optional: histogram equalization for better contrast
-            img_yuv = cv2.cvtColor(img_masked, cv2.COLOR_BGR2YUV)
-            img_yuv[:, :, 0] = cv2.equalizeHist(img_yuv[:, :, 0])
-            img_processed = cv2.cvtColor(img_yuv, cv2.COLOR_YUV2BGR)
-
-            # Save processed image
-            output_path = processed_dir / img_path.name
-            cv2.imwrite(str(output_path), img_processed)
-            processed_count += 1
-
-            if verbose and processed_count % 10 == 0:
-                print_info(f"  Processed {processed_count}/{len(image_files)} images")
-
-        except Exception as e:
-            if verbose:
-                print_warning(f"Failed to process {img_path.name}: {str(e)}")
-            continue
-
-    print_success(f"Preprocessed {processed_count} fisheye images")
-    return processed_count > 0
 
 
 def run_docker_command(command, step_name, verbose=False):
@@ -417,14 +336,6 @@ def clean_generated_files(input_path, verbose=False):
             shutil.rmtree(dense_path)
             files_cleaned.append(f"{image_dir_name}/dense/")
 
-        # Clean fisheye preprocessing directory
-        processed_fisheye_path = image_dir / "processed_fisheye"
-        if processed_fisheye_path.exists():
-            import shutil
-
-            shutil.rmtree(processed_fisheye_path)
-            files_cleaned.append(f"{image_dir_name}/processed_fisheye/")
-
         if verbose and files_cleaned:
             print_info("Cleaned files:")
             for file_item in files_cleaned:
@@ -530,7 +441,7 @@ def create_directory(path):
     "--fps",
     type=float,
     default=2.0,
-    help="Frames per second to extract from video",
+    help="Frames per second to extract from video (default: 1 fps)",
     show_default=True,
 )
 @click.option(
@@ -578,38 +489,6 @@ def create_directory(path):
     help="Stop processing at a specific step (1-7)",
     show_default=True,
 )
-@click.option(
-    "--camera-model",
-    type=click.Choice(
-        [
-            "PINHOLE",
-            "SIMPLE_PINHOLE",
-            "RADIAL",
-            "OPENCV",
-            "OPENCV_FISHEYE",
-            "FULL_OPENCV",
-            "FOV",
-            "SIMPLE_RADIAL_FISHEYE",
-            "RADIAL_FISHEYE",
-            "THIN_PRISM_FISHEYE",
-        ]
-    ),
-    default="PINHOLE",
-    help="Camera model for feature extraction",
-    show_default=True,
-)
-@click.option(
-    "--single-camera",
-    is_flag=True,
-    default=False,
-    help="Use single camera model for all images (recommended for fisheye)",
-)
-@click.option(
-    "--fisheye-preprocessing",
-    is_flag=True,
-    default=False,
-    help="Apply fisheye preprocessing (crop and resize for better feature detection)",
-)
 def main(
     input_path,
     docker_image,
@@ -625,9 +504,6 @@ def main(
     step,
     start_from,
     stop_at,
-    camera_model,
-    single_camera,
-    fisheye_preprocessing,
 ):
     """Run complete COLMAP pipeline on a directory of images or extract frames from video first.
 
@@ -682,34 +558,6 @@ def main(
     print_success(f"Starting COLMAP pipeline for '{image_dir_name}'")
     print_info(f"Working directory: {parent_dir}")
     print_info(f"Docker image: {docker_image}")
-    print_info(f"Camera model: {camera_model}")
-
-    # Display fisheye-specific information
-    if camera_model in [
-        "OPENCV_FISHEYE",
-        "RADIAL_FISHEYE",
-        "SIMPLE_RADIAL_FISHEYE",
-        "THIN_PRISM_FISHEYE",
-    ]:
-        print_info("Fisheye camera model detected")
-        if not single_camera:
-            print_warning("Consider using --single-camera for fisheye images")
-        if not fisheye_preprocessing:
-            print_info("Tip: Use --fisheye-preprocessing for better feature detection")
-
-    if fisheye_preprocessing:
-        print_info("Fisheye preprocessing enabled")
-    if single_camera:
-        print_info("Single camera model enabled")
-
-    # Fisheye preprocessing step
-    actual_image_dir_name = image_dir_name
-    if fisheye_preprocessing:
-        if preprocess_fisheye_images(image_dir, verbose):
-            actual_image_dir_name = f"{image_dir_name}/processed_fisheye"
-            print_success("Using preprocessed fisheye images for reconstruction")
-        else:
-            print_warning("Fisheye preprocessing failed - using original images")
 
     # Configure execution mode
     if step:
@@ -727,39 +575,30 @@ def main(
         stop_at = min(stop_at, 6)  # Can't do meshing if skipping mesh
 
     try:
-        # Build feature extraction command with camera model parameters
-        feature_extraction_cmd = [
-            "docker",
-            "run",
-            "--rm",
-            "--gpus",
-            "all",
-            "-v",
-            f"{os.getcwd()}:/workspace",
-            "-w",
-            "/workspace",
-            docker_image,
-            "colmap",
-            "feature_extractor",
-            "--database_path",
-            "database.db",
-            "--image_path",
-            actual_image_dir_name,
-            "--ImageReader.camera_model",
-            camera_model,
-        ]
-
-        # Add single camera option if specified
-        if single_camera:
-            feature_extraction_cmd.extend(["--ImageReader.single_camera", "1"])
-
         # Define all pipeline steps with step numbers
         all_steps = [
             {
                 "number": 1,
                 "name": "1/7 - Feature Extraction",
                 "category": "sparse",
-                "command": feature_extraction_cmd,
+                "command": [
+                    "docker",
+                    "run",
+                    "--rm",
+                    "--gpus",
+                    "all",
+                    "-v",
+                    f"{os.getcwd()}:/workspace",
+                    "-w",
+                    "/workspace",
+                    docker_image,
+                    "colmap",
+                    "feature_extractor",
+                    "--database_path",
+                    "database.db",
+                    "--image_path",
+                    image_dir_name,
+                ],
             },
             {
                 "number": 2,
@@ -802,7 +641,7 @@ def main(
                     "--database_path",
                     "database.db",
                     "--image_path",
-                    f"{actual_image_dir_name}/",
+                    f"{image_dir_name}/",
                     "--output_path",
                     f"{image_dir_name}/sparse/",
                 ],
@@ -825,7 +664,7 @@ def main(
                     "colmap",
                     "image_undistorter",
                     "--image_path",
-                    f"{actual_image_dir_name}/",
+                    f"{image_dir_name}/",
                     "--input_path",
                     f"{image_dir_name}/sparse/0",
                     "--output_path",
@@ -936,22 +775,14 @@ def main(
         # Execute pipeline
         total_start = time.time()
 
-        for step_def in steps:
-            step_num = step_def["number"]
-            step_name = step_def["name"]
-
-            # Skip if step is already completed (unless force mode)
-            if not step and check_step_completed(image_dir_name, step_num, parent_dir):
-                print_success(f"Step already completed: {step_name}")
-                continue
-
+        for step in steps:
             # Run the step
-            if not run_docker_command(step_def["command"], step_name, verbose):
-                print_error(f"Pipeline failed at step: {step_name}")
+            if not run_docker_command(step["command"], step["name"], verbose):
+                print_error(f"Pipeline failed at step: {step['name']}")
                 sys.exit(1)
 
-            # Special validation for sparse reconstruction
-            if step_num == 3:  # Sparse reconstruction step
+            # Check if sparse reconstruction created a model
+            if step["name"].startswith("3/7"):  # Sparse reconstruction step
                 if not os.path.exists(f"{image_dir_name}/sparse/0"):
                     print_error("Sparse reconstruction failed - no model created")
                     sys.exit(1)
